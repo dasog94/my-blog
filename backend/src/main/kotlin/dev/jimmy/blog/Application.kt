@@ -16,6 +16,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.Serializable
 import java.util.Date
+import java.net.URI
 
 @Serializable data class LoginRequest(val email: String, val password: String)
 @Serializable data class UserResponse(val id: String, val name: String, val email: String)
@@ -38,7 +39,17 @@ fun Application.module() {
 
     install(ContentNegotiation) { json() }
     install(CORS) {
-        allowHost("localhost:3000")
+        val origins = (System.getenv("CORS_ALLOWED_ORIGINS") ?: "http://localhost:3000")
+            .split(",").map { it.trim() }
+        for (origin in origins) {
+            val uri = URI(origin)
+            require(uri.scheme in listOf("http", "https") && uri.host != null &&
+                uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
+                uri.rawPath.orEmpty() in listOf("", "/")) {
+                "CORS_ALLOWED_ORIGINS must contain comma-separated HTTP(S) origins"
+            }
+            allowHost(uri.rawAuthority, schemes = listOf(uri.scheme))
+        }
         allowHeader(HttpHeaders.ContentType)
         allowHeader(HttpHeaders.Authorization)
         allowMethod(HttpMethod.Post)
@@ -54,6 +65,8 @@ fun Application.module() {
     }
 
     routing {
+        get("/health") { call.respondText("ok") }
+
         post("/api/auth/login") {
             val request = call.receive<LoginRequest>()
             if (request.email.lowercase() != accountUser.email.lowercase() || request.password != accountPassword) {
