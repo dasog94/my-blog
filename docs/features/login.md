@@ -63,6 +63,22 @@ The frontend reads the Ktor API origin from:
 NEXT_PUBLIC_API_URL=http://localhost:8080
 ```
 
+That value is for local development. Production builds require the actual
+HTTPS API origin and embed it in the client bundle; changing it requires
+rebuilding and redeploying the frontend. Do not append `/api` or `/login`.
+
+The Ktor process defaults to `APP_ENV=production`. Production startup
+requires `CORS_ALLOWED_ORIGINS` to list the exact frontend HTTPS origins.
+Use explicit `APP_ENV=development` for a local HTTP frontend/API pair.
+Both JSON login requests and bearer-authenticated `/api/auth/me` requests
+can trigger browser CORS preflights. The server allows `Content-Type` and
+`Authorization` for this flow; no cross-origin cookie option is needed for
+the current bearer-token contract.
+
+The [deployment guide](../render.md) describes validation rules, Render
+migration, and automated local/deployed browser login tests. A passing
+health check alone does not confirm this login connection works.
+
 ## API contract
 
 ### Log in

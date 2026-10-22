@@ -16,7 +16,6 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.Serializable
 import java.util.Date
-import java.net.URI
 
 @Serializable data class LoginRequest(val email: String, val password: String)
 @Serializable data class UserResponse(val id: String, val name: String, val email: String)
@@ -25,30 +24,20 @@ import java.net.URI
 
 fun main(args: Array<String>) = EngineMain.main(args)
 
-fun Application.module() {
-    val secret = requiredEnv("JWT_SECRET")
-    val accountPassword = requiredEnv("BLOG_ACCOUNT_PASSWORD")
-    val accountUser = UserResponse(
-        id = requiredEnv("BLOG_ACCOUNT_ID"),
-        name = requiredEnv("BLOG_ACCOUNT_NAME"),
-        email = requiredEnv("BLOG_ACCOUNT_EMAIL"),
-    )
+fun Application.module() = configureApplication(DeploymentConfig.fromEnvironment())
+
+internal fun Application.configureApplication(config: DeploymentConfig) {
+    val secret = config.jwtSecret
+    val accountPassword = config.accountPassword
+    val accountUser = config.accountUser
     val issuer = environment.config.property("jwt.issuer").getString()
     val audience = environment.config.property("jwt.audience").getString()
     val realm = environment.config.property("jwt.realm").getString()
 
     install(ContentNegotiation) { json() }
     install(CORS) {
-        val origins = (System.getenv("CORS_ALLOWED_ORIGINS") ?: "http://localhost:3000")
-            .split(",").map { it.trim() }
-        for (origin in origins) {
-            val uri = URI(origin)
-            require(uri.scheme in listOf("http", "https") && uri.host != null &&
-                uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
-                uri.rawPath.orEmpty() in listOf("", "/")) {
-                "CORS_ALLOWED_ORIGINS must contain comma-separated HTTP(S) origins"
-            }
-            allowHost(uri.rawAuthority, schemes = listOf(uri.scheme))
+        for (origin in config.corsOrigins) {
+            allowHost(origin.authority, schemes = listOf(origin.scheme))
         }
         allowHeader(HttpHeaders.ContentType)
         allowHeader(HttpHeaders.Authorization)
@@ -91,7 +80,3 @@ fun Application.module() {
         }
     }
 }
-
-private fun requiredEnv(name: String): String =
-    System.getenv(name)?.takeIf { it.isNotBlank() }
-        ?: error("Required environment variable $name is not set")

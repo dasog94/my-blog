@@ -9,6 +9,8 @@ services:
     dockerContext: .
     healthCheckPath: /health
     envVars:
+      - key: APP_ENV
+        value: production
       - key: JWT_SECRET
         generateValue: true
       - key: BLOG_ACCOUNT_ID
@@ -20,4 +22,5 @@ services:
       - key: BLOG_ACCOUNT_PASSWORD
         sync: false
       - key: CORS_ALLOWED_ORIGINS
-        value: http://localhost:3000
+        # Supply the actual frontend HTTPS origin(s) in Render.
+        sync: false

@@ -12,6 +12,8 @@ node_modules/
 
 # testing
 /coverage
+front/test-results/
+front/playwright-report/
 
 # next.js
 .next/
@@ -43,4 +45,5 @@ dist/
 
 # Kotlin / Gradle
 .gradle/
+/backend/.kotlin/
 /backend/build/
