@@ -1,5 +1,6 @@
 import vinext from "vinext";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
+import { resolveApiUrl } from "./lib/api-config.mjs";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -33,7 +34,15 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command, mode }) => {
+  // Vite does not load .env files before evaluating this config. loadEnv also
+  // gives deployment-provided variables precedence over values in those files.
+  const env = loadEnv(mode, process.cwd(), "NEXT_PUBLIC_");
+  const environment = command === "build" || mode === "production" || process.env.NODE_ENV === "production"
+    ? "production"
+    : "development";
+  const apiUrl = resolveApiUrl(env.NEXT_PUBLIC_API_URL, environment);
+
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -44,6 +53,9 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    define: {
+      "process.env.NEXT_PUBLIC_API_URL": JSON.stringify(apiUrl),
+    },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,

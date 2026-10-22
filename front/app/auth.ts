@@ -1,3 +1,5 @@
+import { resolveApiUrl } from "../lib/api-config.mjs";
+
 export type AuthUser = {
   id: string;
   name: string;
@@ -10,7 +12,8 @@ export type AuthSession = {
 };
 
 const SESSION_KEY = "jimmy-blog.auth-session";
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// Keep these direct property reads: the frontend bundler replaces them at build time.
+const API_URL = resolveApiUrl(process.env.NEXT_PUBLIC_API_URL, process.env.NODE_ENV);
 
 export function readSession(): AuthSession | null {
   if (typeof window === "undefined") return null;

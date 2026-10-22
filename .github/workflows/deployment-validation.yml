@@ -1,0 +1,58 @@
+name: Deployment configuration and login
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployment-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.14.3'
+          cache-provider: basic
+      - name: Install frontend dependencies
+        working-directory: front
+        run: npm ci
+      - name: Validate frontend environment and authentication client
+        working-directory: front
+        run: npm run test:unit
+      - name: Reject missing, blank, or local API origins in production builds
+        working-directory: front
+        run: npm run test:config
+      - name: Build and verify rendered pages
+        working-directory: front
+        env:
+          # Reserved test domain; no request is sent to this address.
+          NEXT_PUBLIC_API_URL: https://api.example.test
+        run: npm run test:rendered
+      - name: Validate Ktor startup, authentication, and CORS
+        working-directory: backend
+        run: gradle --no-daemon test installDist
+      - name: Install Chromium
+        working-directory: front
+        run: npx playwright install --with-deps chromium
+      - name: Exercise real browser login across frontend and API origins
+        working-directory: front
+        run: npm run test:e2e
