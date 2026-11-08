@@ -25,7 +25,19 @@ import java.net.URI
 
 fun main(args: Array<String>) = EngineMain.main(args)
 
-fun Application.module() {
+fun Application.module() = configureBlogApplication(System.getenv())
+
+internal fun Application.configureBlogApplication(
+    env: Map<String, String>,
+    nanoTime: () -> Long = System::nanoTime,
+) {
+    val loginPolicy = LoginRateLimitConfig.fromEnvironment(env)
+    val loginLimiter = LoginAttemptLimiter(loginPolicy, nanoTime)
+    val loginClients = LoginClientResolver(loginPolicy.trustedProxies)
+    fun requiredEnv(name: String): String =
+        env[name]?.takeIf { it.isNotBlank() }
+            ?: error("Required environment variable $name is not set")
+
     val secret = requiredEnv("JWT_SECRET")
     val accountPassword = requiredEnv("BLOG_ACCOUNT_PASSWORD")
     val accountUser = UserResponse(
@@ -39,7 +51,7 @@ fun Application.module() {
 
     install(ContentNegotiation) { json() }
     install(CORS) {
-        val origins = (System.getenv("CORS_ALLOWED_ORIGINS") ?: "http://localhost:3000")
+        val origins = (env["CORS_ALLOWED_ORIGINS"] ?: "http://localhost:3000")
             .split(",").map { it.trim() }
         for (origin in origins) {
             val uri = URI(origin)
@@ -53,6 +65,7 @@ fun Application.module() {
         allowHeader(HttpHeaders.ContentType)
         allowHeader(HttpHeaders.Authorization)
         allowMethod(HttpMethod.Post)
+        exposeHeader(HttpHeaders.RetryAfter)
     }
     install(Authentication) {
         jwt("auth-jwt") {
@@ -68,8 +81,26 @@ fun Application.module() {
         get("/health") { call.respondText("ok") }
 
         post("/api/auth/login") {
+            // Use the transport peer, never the mutable request.origin connection point.
+            val clientId = loginClients.resolve(
+                call.request.local.remoteAddress,
+                call.request.headers.getAll(HttpHeaders.XForwardedFor),
+            )
+            if (clientId == null) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid login request."))
+                return@post
+            }
+            val retryAfter = loginLimiter.retryAfterOrAcquire(clientId)
+            if (retryAfter != null) {
+                call.response.header(HttpHeaders.RetryAfter, retryAfter.toString())
+                call.response.header(HttpHeaders.CacheControl, "no-store")
+                call.respond(HttpStatusCode.TooManyRequests, ErrorResponse("Too many login attempts. Try again later."))
+                return@post
+            }
             val request = call.receive<LoginRequest>()
             if (request.email.lowercase() != accountUser.email.lowercase() || request.password != accountPassword) {
+                // Only canonical IP literals or fixed fallback keys reach this log. No credentials or headers.
+                environment.log.warn("auth.login.failed client={}", clientId)
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Email or password is incorrect."))
                 return@post
             }
@@ -91,7 +122,3 @@ fun Application.module() {
         }
     }
 }
-
-private fun requiredEnv(name: String): String =
-    System.getenv(name)?.takeIf { it.isNotBlank() }
-        ?: error("Required environment variable $name is not set")
