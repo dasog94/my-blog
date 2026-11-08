@@ -52,3 +52,12 @@ require persistent storage. The JVM heap is capped at 256 MB in the image,
 leaving room for JVM and networking overhead.
 
 References: https://render.com/docs/free and https://render.com/docs/blueprint-spec.
+
+## Login attempt protection
+
+The API enforces configurable per-client and process-wide rolling login limits.
+The Blueprint deliberately trusts no forwarded IP headers until the actual
+proxy chain is verified. Proxy sharing can therefore make clients share a
+budget, and in-memory counters reset on sleep/restarts/redeploys. Review
+[login attempt throttling](features/login-rate-limiting.md) before adjusting
+proxy trust, limits, audit-log retention, or instance count.
