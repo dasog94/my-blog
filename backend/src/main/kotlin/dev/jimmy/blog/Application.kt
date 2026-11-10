@@ -24,9 +24,20 @@ import java.util.Date
 
 fun main(args: Array<String>) = EngineMain.main(args)
 
-fun Application.module() = configureApplication(DeploymentConfig.fromEnvironment())
+fun Application.module() = configureBlogApplication(System.getenv())
 
-internal fun Application.configureApplication(config: DeploymentConfig) {
+/** Production and tests share validation of the same environment snapshot. */
+internal fun Application.configureBlogApplication(
+    env: Map<String, String>,
+    nanoTime: () -> Long = System::nanoTime,
+) = configureApplication(DeploymentConfig.fromEnvironment(env), nanoTime)
+
+internal fun Application.configureApplication(
+    config: DeploymentConfig,
+    nanoTime: () -> Long = System::nanoTime,
+) {
+    val loginLimiter = LoginAttemptLimiter(config.loginRateLimit, nanoTime)
+    val loginClients = LoginClientResolver(config.loginRateLimit.trustedProxies)
     val secret = config.jwtSecret
     val accountPassword = config.accountPassword
     val accountUser = config.accountUser
@@ -42,6 +53,7 @@ internal fun Application.configureApplication(config: DeploymentConfig) {
         allowHeader(HttpHeaders.ContentType)
         allowHeader(HttpHeaders.Authorization)
         allowMethod(HttpMethod.Post)
+        exposeHeader(HttpHeaders.RetryAfter)
     }
     install(Authentication) {
         jwt("auth-jwt") {
@@ -57,8 +69,26 @@ internal fun Application.configureApplication(config: DeploymentConfig) {
         get("/health") { call.respondText("ok") }
 
         post("/api/auth/login") {
+            // Use the transport peer, never the mutable request.origin connection point.
+            val clientId = loginClients.resolve(
+                call.request.local.remoteAddress,
+                call.request.headers.getAll(HttpHeaders.XForwardedFor),
+            )
+            if (clientId == null) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid login request."))
+                return@post
+            }
+            val retryAfter = loginLimiter.retryAfterOrAcquire(clientId)
+            if (retryAfter != null) {
+                call.response.header(HttpHeaders.RetryAfter, retryAfter.toString())
+                call.response.header(HttpHeaders.CacheControl, "no-store")
+                call.respond(HttpStatusCode.TooManyRequests, ErrorResponse("Too many login attempts. Try again later."))
+                return@post
+            }
             val request = call.receive<LoginRequest>()
             if (request.email.lowercase() != accountUser.email.lowercase() || request.password != accountPassword) {
+                // Only canonical IP literals or fixed fallback keys reach this log. No credentials or headers.
+                environment.log.warn("auth.login.failed client={}", clientId)
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Email or password is incorrect."))
                 return@post
             }

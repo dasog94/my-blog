@@ -112,6 +112,10 @@ Successful response:
 
 Invalid credentials return `401 Unauthorized`.
 
+Repeated attempts return `429 Too Many Requests` with a `Retry-After` header.
+See [login attempt throttling](login-rate-limiting.md) for configurable rolling
+limits, recovery, proxy trust, Render deployment behavior, and tests.
+
 ### Get the current user
 
 ```http
@@ -143,4 +147,5 @@ Before production release:
 - Use HTTPS for all frontend and API traffic.
 - Prefer short-lived access tokens with a secure, `HttpOnly`, `SameSite`
   refresh cookie instead of storing long-lived credentials in browser storage.
-- Add login rate limiting and audit failed authentication attempts.
+- Verify the [login throttling policy](login-rate-limiting.md) for the deployed
+  ingress and configure durable collection/retention of failed-login audit logs.

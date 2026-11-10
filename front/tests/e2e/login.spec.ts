@@ -126,3 +126,34 @@ test("a different browser origin cannot use the login API", async ({ page }) => 
   await expect(page.getByRole("alert")).toBeVisible();
   expect(await page.evaluate((key) => sessionStorage.getItem(key), sessionKey)).toBeNull();
 });
+
+// Run last: this intentionally exhausts the shared local fixture's budget.
+test("local browser reads 429 and Retry-After and cannot create a session during cooldown", async ({ page }) => {
+  test.skip(deployed, "Budget exhaustion is only tested against the disposable local API.");
+  await openLogin(page);
+  const throttled = await page.evaluate(async ({ url, email }) => {
+    for (let attempt = 0; attempt <= 5; attempt++) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: "incorrect-local-test-password" }),
+      });
+      if (response.status === 429) {
+        return { status: response.status, retryAfter: response.headers.get("Retry-After"), body: await response.json() };
+      }
+      if (response.status !== 401) throw new Error(`Unexpected login status: ${response.status}`);
+    }
+    throw new Error("Configured local login limit was not enforced.");
+  }, { url: loginUrl, email: targets.email });
+  expect(throttled.status).toBe(429);
+  expect(throttled.body).toEqual({ message: "Too many login attempts. Try again later." });
+  expect(throttled.retryAfter).toMatch(/^[1-9]\d*$/);
+  expect(Number(throttled.retryAfter)).toBeLessThanOrEqual(60);
+
+  const responsePromise = page.waitForResponse((response) =>
+    response.url() === loginUrl && response.request().method() === "POST");
+  await submitLogin(page, targets.password);
+  expect((await responsePromise).status()).toBe(429);
+  await expect(page.getByRole("alert")).toHaveText("Too many login attempts. Try again later.");
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), sessionKey)).toBeNull();
+});

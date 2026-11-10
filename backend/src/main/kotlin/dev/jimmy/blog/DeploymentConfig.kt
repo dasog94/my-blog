@@ -13,6 +13,7 @@ internal class DeploymentConfig private constructor(
     val accountPassword: String,
     val accountUser: UserResponse,
     val corsOrigins: List<CorsOrigin>,
+    val loginRateLimit: LoginRateLimitConfig,
 ) {
     companion object {
         fun fromEnvironment(env: Map<String, String> = System.getenv()): DeploymentConfig {
@@ -39,6 +40,7 @@ internal class DeploymentConfig private constructor(
                     email = required("BLOG_ACCOUNT_EMAIL"),
                 ),
                 corsOrigins = origins,
+                loginRateLimit = LoginRateLimitConfig.fromEnvironment(env),
             )
         }
 

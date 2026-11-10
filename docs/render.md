@@ -20,6 +20,8 @@ accepted and normalized. The frontend calls `/api/auth/login` and
 | `CORS_ALLOWED_ORIGINS` | Ktor process startup | The actual **frontend HTTPS origin(s)**, separated by commas. Required in production. |
 | `JWT_SECRET` | Ktor process startup | A secret supplied by Render's `generateValue`, or another protected environment setting. |
 | `BLOG_ACCOUNT_ID`, `BLOG_ACCOUNT_NAME`, `BLOG_ACCOUNT_EMAIL`, `BLOG_ACCOUNT_PASSWORD` | Ktor process startup | All must be nonblank. Configure the single account used by the login form. |
+| `LOGIN_RATE_LIMIT_CLIENT_ATTEMPTS`, `LOGIN_RATE_LIMIT_TOTAL_ATTEMPTS`, `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | Ktor process startup | Defaults: `5` per client, `100` per process, rolling `60` seconds. Invalid values stop startup in both environments. |
+| `LOGIN_TRUSTED_PROXY_CIDRS` | Ktor process startup | Omit until the actual ingress proxy CIDRs and forwarding behavior are verified. No proxies are trusted by default. |
 
 Production validation rejects HTTP, localhost/loopback/unspecified addresses,
 wildcards, credentials in URLs, invalid ports, paths, queries, and fragments.
@@ -121,6 +123,21 @@ the frontend API URL and the backend's exact allowed frontend origin.
 Do not include a local HTTP frontend in a production CORS list; use a local
 API for development or an explicitly configured HTTPS preview frontend.
 
+## Login attempt protection
+
+The same startup path validates deployment origins, account settings, login
+budgets, and proxy CIDRs before installing plugins or routes:
+`module()` → `configureBlogApplication(env)` → `DeploymentConfig.fromEnvironment(env)`
+→ `configureApplication(config, nanoTime)`. Both existing test entry points use
+this validated configuration; the monotonic clock remains injectable.
+
+The API enforces configurable per-client and process-wide rolling login limits.
+The Blueprint deliberately trusts no forwarded IP headers until the actual
+proxy chain is verified. Proxy sharing can therefore make clients share a
+budget, and in-memory counters reset on sleep/restarts/redeploys. Review
+[login attempt throttling](features/login-rate-limiting.md) before adjusting
+proxy trust, limits, audit-log retention, or instance count.
+
 ## Automated verification
 
 The deployment-validation workflow runs on pull requests and pushes to
@@ -141,13 +158,18 @@ npm run test:e2e
 
 The backend tests cover startup validation, JSON login preflight, successful
 and rejected logins, bearer-token authentication, and allowed/disallowed
-origins. Frontend tests cover URL validation and authentication requests;
+origins. They also check that both initialization entry points enforce the
+configured limits with production CORS, reject invalid deployment/limiter
+settings before startup, and preserve proxy validation, concurrency, and
+authenticated sessions. Frontend tests cover URL validation and authentication requests;
 `test:config` also proves the actual build command rejects missing, blank,
 and local API origins before producing a bundle.
 Playwright starts the real frontend and Ktor API on separate local ports,
 then checks browser login, session storage, the authenticated header,
 `Authorization` requests to `/api/auth/me`, readable authentication errors,
-and browser enforcement of a disallowed origin. Existing services on the
+and browser enforcement of a disallowed origin. A local-only case exhausts
+the fixture's login budget and verifies a browser-readable `429`, exposed
+`Retry-After`, and the UI error without creating a session. Existing services on the
 test ports must be stopped first; the suite does not reuse arbitrary servers.
 
 For the production build and rendered-HTML tests, supply the confirmed API
@@ -177,8 +199,10 @@ This mode requires every value, starts no local servers, and uses the actual
 browser UI. It checks that the bundle sends login to the expected API, that
 the browser can read login and `/me` responses through CORS, and that invalid
 credentials return the expected error. It deliberately attempts one failed
-login. Use an account appropriate for testing and account for any external
-rate limiting. Traces, screenshots, and videos are disabled so this suite
+login. Use an account appropriate for testing and account for the application
+and any external rate limits; if already throttled, wait for `Retry-After`
+before rerunning. The budget-exhaustion test only runs against local fixtures.
+Traces, screenshots, and videos are disabled so this suite
 does not save credentials or session tokens in those artifacts.
 
 The deployed suite is not run automatically by the repository workflow.
@@ -195,6 +219,7 @@ local tests do not establish that the production deployment works.
 | Browser requests localhost or the old API | Rebuild/redeploy the frontend with the corrected public variable; a runtime-only change is insufficient. |
 | Preflight fails or lacks `Access-Control-Allow-Origin` | Compare the browser's `Origin` with the API allowlist, including scheme and non-default port. Allow `Content-Type` for login and `Authorization` for `/me`. |
 | Login returns readable `401` | The API was reached; check the configured account email/password. |
+| Login returns readable `429` | Wait for `Retry-After`; correct credentials do not bypass the cooldown. Review shared proxy budgets before changing limits or trusting headers. |
 | First request is slow | A Render Free service may be waking from idle. Warm `/health` and allow startup time before diagnosing an origin mismatch. |
 
 Render Free web services currently spin down after 15 minutes without

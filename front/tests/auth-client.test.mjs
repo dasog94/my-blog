@@ -32,6 +32,14 @@ test("a non-JSON service failure does not mask the login error", async (t) => {
   await assert.rejects(login(user.email, "test-password"), /Unable to sign in\./);
 });
 
+test("throttled login preserves the API's 429 message and rejects the session", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => Response.json(
+    { message: "Too many login attempts. Try again later." },
+    { status: 429, headers: { "Retry-After": "60" } },
+  ));
+  await assert.rejects(login(user.email, "test-password"), /Too many login attempts\. Try again later\./);
+});
+
 test("network failures reject login rather than creating a session", async (t) => {
   t.mock.method(globalThis, "fetch", async () => { throw new TypeError("Failed to fetch"); });
   await assert.rejects(login(user.email, "test-password"), /Failed to fetch/);
